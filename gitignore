@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+.env
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.env
+
+# Jupyter Notebooks (if used for testing)
+.ipynb_checkpoints/
+*.ipynb
+
+# Output Files (generated, not source)
+output/
+*.json
+*.csv
+
+# Video Files (too large for git)
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Model Weights (too large for git)
+*.pt
+*.pth
+*.onnx
+*.weights
+*.pb
+yolov8*.pt
+
+# MediaPipe / OpenCV artifacts
+*.caffemodel
+*.prototxt
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VS Code / Codespaces
+.vscode/
+*.code-workspace
+
+# Logs
+*.log
+logs/
+
+# Temporary Files
+tmp/
+temp/
+*.tmp
