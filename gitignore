@@ -1,67 +1,81 @@
-# Python
+# --- Python ---
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
+*$py.class
+*.so
 .Python
-*.egg-info/
-dist/
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
 .eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Virtual Environment
+# --- Virtual Environments ---
 venv/
 .venv/
 env/
-.env
+ENV/
+env.bak/
+venv.bak/
 
-# Environment Variables & Secrets
+# --- Environment Variables & Secrets ---
 .env
 .env.local
+.env.shared-spec
 *.env
+.secret
+.secrets
 
-# Jupyter Notebooks (if used for testing)
+# --- Jupyter Notebooks ---
 .ipynb_checkpoints/
-*.ipynb
+# *.ipynb  <-- Uncomment ONLY if you want to block all notebooks
 
-# Output Files (generated, not source)
+# --- Data & Output (Handle with care) ---
 output/
-*.json
-*.csv
+# *.json   <-- Risky: might block config files
+# *.csv    <-- Risky: might block source data
+data/raw/
+data/processed/
 
-# Video Files (too large for git)
+# --- Video Files (Large Assets) ---
 *.mp4
 *.mov
 *.avi
 *.mkv
 *.webm
 
-# Model Weights (too large for git)
+# --- Machine Learning (Weights & Models) ---
 *.pt
 *.pth
 *.onnx
 *.weights
 *.pb
+*.h5
+*.tflite
 yolov8*.pt
 
-# MediaPipe / OpenCV artifacts
+# --- MediaPipe / OpenCV / IDE ---
 *.caffemodel
 *.prototxt
+.vscode/
+.idea/
+*.code-workspace
 
-# OS Files
+# --- OS & Logs ---
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# VS Code / Codespaces
-.vscode/
-*.code-workspace
-
-# Logs
 *.log
 logs/
-
-# Temporary Files
 tmp/
 temp/
 *.tmp
