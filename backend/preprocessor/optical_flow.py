@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 STATIC_MAGNITUDE_THRESHOLD = 1.0
 
 # A frame is "critical" if mean flow magnitude is above this value (px/frame)
-CRITICAL_MAGNITUDE_THRESHOLD = 8.0
+CRITICAL_MAGNITUDE_THRESHOLD = 4.0
 
 # Minimum contiguous run to count as a static moment (seconds)
 STATIC_MIN_DURATION_SEC = 1.0

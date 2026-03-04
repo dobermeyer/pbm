@@ -17,6 +17,9 @@ import logging
 import os
 import sys
 import time
+import sqlite3
+import requests
+import os
 
 # ---------------------------------------------------------------------------
 # Logging setup — prints timestamped progress to the terminal
@@ -39,7 +42,7 @@ from preprocessor.scene_cut       import detect_scene_cuts
 from preprocessor.face_detection  import detect_faces
 from preprocessor.object_detection import detect_objects
 from preprocessor.complexity_score import compute_complexity
-from preprocessor.optical_flow    import detect_static_moments
+from preprocessor.optical_flow import detect_motion_windows
 # from preprocessor.audio_analysis  import detect_critical_moments
 
 
@@ -240,15 +243,22 @@ def run_pipeline(video_path: str, output_dir: str = "backend/output") -> str:
         target=metadata, key="complexity",
     )
 
-    # 4e. Optical flow / static moment detection
-    #   Identifies stretches of video where almost nothing is moving —
-    #   these are the windows used to measure fixation stability.
-    #   Output: list of [start_s, end_s] pairs
+    # 4e. Optical flow — static and critical moment detection
+    #   detect_motion_windows() returns both window types in one pass for
+    #   efficiency (optical flow is computed once, not twice). We use two
+    #   run_module() calls with lambda wrappers so each key is written
+    #   independently and a failure in one doesn't silently corrupt the other.
     run_module(
         "Static Moment Detection",
-        detect_static_moments,
+        lambda vp, ms: detect_motion_windows(vp, ms)["static_moments"],
         video_path, MAX_SECONDS,
         target=metadata, key="static_moments",
+    )
+    run_module(
+        "Critical Moment Detection",
+        lambda vp, ms: detect_motion_windows(vp, ms)["critical_moments"],
+        video_path, MAX_SECONDS,
+        target=metadata, key="critical_moments",
     )
 
     # 4f. Audio analysis / critical moment detection
@@ -300,6 +310,7 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    init_local_db()
     args = parse_args()
     try:
         result_path = run_pipeline(
@@ -310,3 +321,155 @@ if __name__ == "__main__":
     except (FileNotFoundError, ValueError, RuntimeError) as err:
         log.error("Pipeline could not start: %s", err)
         sys.exit(1)
+
+        # ---------------------------------------------------------------------------
+# LOCAL BUFFER → SUPABASE SYNC
+# Per the Local Buffer & Supabase Sync spec (v1.0, 2026-03-04).
+# ---------------------------------------------------------------------------
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
+LOCAL_DB_PATH = os.path.join(os.path.dirname(__file__), "local_buffer.db")
+
+
+def init_local_db():
+    """
+    Creates the local SQLite tables if they do not already exist.
+    Call once at app start. Schema matches Supabase exactly.
+    """
+    conn = sqlite3.connect(LOCAL_DB_PATH)
+    c = conn.cursor()
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id  TEXT PRIMARY KEY,
+            child_id    TEXT,
+            video_id    TEXT,
+            t_zero_ms   INTEGER,
+            sync_valid  INTEGER,
+            video_fps   REAL,
+            created_at  INTEGER,
+            sync_status TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS gaze_frames (
+            session_id      TEXT,
+            frame_index     INTEGER,
+            timestamp_ms    INTEGER,
+            iris_x          REAL,
+            iris_y          REAL,
+            iris_offset_x   REAL,
+            iris_offset_y   REAL,
+            pupil_diameter  REAL,
+            blink           INTEGER,
+            landmark_valid  INTEGER,
+            PRIMARY KEY (session_id, frame_index)
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+    log.info("local_db: tables initialised.")
+
+
+def sync_session(session_id: str):
+    """
+    Uploads one completed session from local SQLite to Supabase in a single POST.
+    On success: marks session as synced, deletes local gaze_frames rows.
+    On failure: resets to local_only so background retry will pick it up.
+    """
+    conn = sqlite3.connect(LOCAL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    # Mark as sync_pending before attempting upload
+    c.execute(
+        "UPDATE sessions SET sync_status = 'sync_pending' WHERE session_id = ?",
+        (session_id,)
+    )
+    conn.commit()
+    log.info(f"sync: session {session_id} → sync_pending")
+
+    # Read all gaze_frames rows for this session
+    c.execute("SELECT * FROM gaze_frames WHERE session_id = ?", (session_id,))
+    rows = c.fetchall()
+
+    if not rows:
+        log.warning(f"sync: no gaze_frames found for session {session_id}. Aborting.")
+        conn.close()
+        return
+
+    frames_payload = [dict(row) for row in rows]
+    log.info(f"sync: {len(frames_payload)} gaze_frames rows ready for upload.")
+
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+    }
+
+    try:
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/gaze_frames",
+            headers=headers,
+            json=frames_payload,
+            timeout=60
+        )
+        response.raise_for_status()
+
+    except requests.exceptions.RequestException as e:
+        # Upload failed — reset to local_only for background retry
+        log.error(f"sync: upload failed for session {session_id}: {e}")
+        c.execute(
+            "UPDATE sessions SET sync_status = 'local_only' WHERE session_id = ?",
+            (session_id,)
+        )
+        conn.commit()
+        conn.close()
+        return
+
+    # Success — mark synced and delete local gaze_frames rows
+    c.execute(
+        "UPDATE sessions SET sync_status = 'synced' WHERE session_id = ?",
+        (session_id,)
+    )
+    c.execute(
+        "DELETE FROM gaze_frames WHERE session_id = ?",
+        (session_id,)
+    )
+    conn.commit()
+    conn.close()
+    log.info(f"sync: session {session_id} → synced. Local gaze_frames deleted.")
+
+
+def sync_pending_sessions():
+    """
+    Background sync: finds any unuploaded sessions and retries.
+    Call on app foreground or when connectivity is restored.
+    """
+    conn = sqlite3.connect(LOCAL_DB_PATH)
+    c = conn.cursor()
+
+    # Any session stuck in sync_pending means the app crashed mid-upload last
+    # time. Reset to local_only and retry cleanly.
+    c.execute(
+        "UPDATE sessions SET sync_status = 'local_only' WHERE sync_status = 'sync_pending'"
+    )
+    conn.commit()
+
+    c.execute(
+        "SELECT session_id FROM sessions WHERE sync_status = 'local_only'"
+    )
+    pending = [row[0] for row in c.fetchall()]
+    conn.close()
+
+    if not pending:
+        log.info("background_sync: no pending sessions.")
+        return
+
+    log.info(f"background_sync: {len(pending)} session(s) to upload.")
+    for session_id in pending:
+        sync_session(session_id)
