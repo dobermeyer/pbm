@@ -309,20 +309,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-if __name__ == "__main__":
-    init_local_db()
-    args = parse_args()
-    try:
-        result_path = run_pipeline(
-            video_path=args.input,
-            output_dir=args.output_dir,
-        )
-        sys.exit(0)
-    except (FileNotFoundError, ValueError, RuntimeError) as err:
-        log.error("Pipeline could not start: %s", err)
-        sys.exit(1)
-
-        # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # LOCAL BUFFER → SUPABASE SYNC
 # Per the Local Buffer & Supabase Sync spec (v1.0, 2026-03-04).
 # ---------------------------------------------------------------------------
@@ -384,7 +371,6 @@ def sync_session(session_id: str):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
 
-    # Mark as sync_pending before attempting upload
     c.execute(
         "UPDATE sessions SET sync_status = 'sync_pending' WHERE session_id = ?",
         (session_id,)
@@ -392,7 +378,6 @@ def sync_session(session_id: str):
     conn.commit()
     log.info(f"sync: session {session_id} → sync_pending")
 
-    # Read all gaze_frames rows for this session
     c.execute("SELECT * FROM gaze_frames WHERE session_id = ?", (session_id,))
     rows = c.fetchall()
 
@@ -421,7 +406,6 @@ def sync_session(session_id: str):
         response.raise_for_status()
 
     except requests.exceptions.RequestException as e:
-        # Upload failed — reset to local_only for background retry
         log.error(f"sync: upload failed for session {session_id}: {e}")
         c.execute(
             "UPDATE sessions SET sync_status = 'local_only' WHERE session_id = ?",
@@ -431,7 +415,6 @@ def sync_session(session_id: str):
         conn.close()
         return
 
-    # Success — mark synced and delete local gaze_frames rows
     c.execute(
         "UPDATE sessions SET sync_status = 'synced' WHERE session_id = ?",
         (session_id,)
@@ -453,8 +436,6 @@ def sync_pending_sessions():
     conn = sqlite3.connect(LOCAL_DB_PATH)
     c = conn.cursor()
 
-    # Any session stuck in sync_pending means the app crashed mid-upload last
-    # time. Reset to local_only and retry cleanly.
     c.execute(
         "UPDATE sessions SET sync_status = 'local_only' WHERE sync_status = 'sync_pending'"
     )
@@ -473,3 +454,17 @@ def sync_pending_sessions():
     log.info(f"background_sync: {len(pending)} session(s) to upload.")
     for session_id in pending:
         sync_session(session_id)
+
+
+if __name__ == "__main__":
+    init_local_db()
+    args = parse_args()
+    try:
+        result_path = run_pipeline(
+            video_path=args.input,
+            output_dir=args.output_dir,
+        )
+        sys.exit(0)
+    except (FileNotFoundError, ValueError, RuntimeError) as err:
+        log.error("Pipeline could not start: %s", err)
+        sys.exit(1)
