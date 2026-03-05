@@ -271,7 +271,6 @@ def run_pipeline(video_path: str, output_dir: str = "backend/output") -> str:
     #     video_path, MAX_SECONDS,
     #     target=metadata, key="critical_moments",
     # )
-    log.info("  [audio_analysis]  — module not yet implemented, skipping.")
 
     # ------------------------------------------------------------------
     # Step 5: Persist results
